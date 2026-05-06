@@ -6,7 +6,7 @@ DOCKER_IMAGE ?= docker.eventstore.com/kurrent-latest/kurrentdb:25.0.0-x64-8.0-bo
 
 PYTHONUNBUFFERED=1
 
-POETRY_VERSION=2.1.2
+POETRY_VERSION=2.2.1
 POETRY ?= poetry@$(POETRY_VERSION)
 
 .PHONY: install-poetry
