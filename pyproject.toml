@@ -4,15 +4,15 @@ build-backend = "poetry.core.masonry.api"
 
 [project]
 name = "eventsourcing-kurrentdb"
-version = "1.2.2"
+version = "1.3.0b0"
 dependencies = [
-  "eventsourcing>=9.4.5,<10.0",
-  "kurrentdbclient>=1.0.2,<2.0",
+  "eventsourcing>=9.6.0b1",
+  "kurrentdbclient>=1.0.2",
 ]
 description = "Python package for eventsourcing with KurrentDB"
 license = { text = "BSD-3-Clause" }
 readme = "README.md"
-requires-python = ">=3.9.2"
+requires-python = ">=3.11.0"
 authors = [
     { "name" = "John Bywater", "email" = "john.bywater@appropriatesoftware.net" },
 ]
@@ -23,11 +23,10 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: BSD License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
-    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.14",
     "Programming Language :: Python",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
@@ -48,7 +47,7 @@ ruff = "*"
 pyright = "*"
 pycryptodome = "*"
 types-protobuf = "*"
-#eventsourcing = {path = "../eventsourcing", develop = true}
+eventsourcing = {path = "../eventsourcing", develop = true}
 
 [tool.black]
 line-length = 88
