@@ -1,9 +1,11 @@
 import os
+from unittest import TestCase
 
 from eventsourcing.persistence import (
     AggregateRecorder,
     ApplicationRecorder,
     InfrastructureFactory,
+    InfrastructureFactoryError,
     ProcessRecorder,
     TrackingRecorder,
 )
@@ -53,6 +55,23 @@ class TestFactory(InfrastructureFactoryTestCase[KurrentDBFactory]):
         if KurrentDBFactory.KURRENTDB_URI in os.environ:
             del os.environ[KurrentDBFactory.KURRENTDB_URI]
         super().tearDown()
+
+
+class TestFactoryEnvironmentError(TestCase):
+    def test_originator_id_type_invalid(self) -> None:
+        with self.assertRaises(InfrastructureFactoryError) as cm:
+            KurrentDBFactory(
+                Environment(
+                    env={
+                        KurrentDBFactory.KURRENTDB_URI: INSECURE_CONNECTION_STRING,
+                        KurrentDBFactory.ORIGINATOR_ID_TYPE: "int",
+                    }
+                )
+            )
+        self.assertEqual(
+            "Invalid ORIGINATOR_ID_TYPE 'int', must be 'uuid' or 'text'",
+            str(cm.exception),
+        )
 
 
 del InfrastructureFactoryTestCase

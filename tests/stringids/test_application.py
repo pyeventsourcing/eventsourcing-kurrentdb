@@ -54,7 +54,6 @@ class TestDogSchool(TestCase):
     def test_dog_school_with_sqlite(self) -> None:
         self.env["PERSISTENCE_MODULE"] = "eventsourcing.sqlite"
         self.env["SQLITE_DBNAME"] = ":memory:"
-        self.env["ORIGINATOR_ID_TYPE"] = "text"
         self.test_dog_school()
 
     @skipIf("eventsourcing_kurrentdb" not in sys.modules, "KurrentDB not installed")

@@ -39,7 +39,7 @@ from eventsourcing.application import Application
 from eventsourcing.domain import Aggregate, event
 
 
-class TrainingSchool(Application[UUID]):
+class TrainingSchool(Application):
     def register(self, name: str) -> int:
         dog = Dog(name)
         recordings = self.save(dog)
@@ -286,6 +286,7 @@ with ProjectionRunner(
     materialised_view.wait(
         application_name=training_school.name,
         notification_id=training_school.recorder.max_notification_id(),
+        timeout=5.0,
     )
 
     # Query the "read model".
@@ -299,6 +300,7 @@ with ProjectionRunner(
     materialised_view.wait(
         application_name=training_school.name,
         notification_id=notification_id,
+        timeout=5.0,
     )
 
     # Expect one trick more, same number of dogs.
@@ -312,6 +314,7 @@ with ProjectionRunner(
     materialised_view.wait(
         training_school.name,
         notification_id,
+        timeout=5.0,
     )
 
     # Expect two tricks more, same number of dogs.

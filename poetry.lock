@@ -247,9 +247,11 @@ version = "9.6.0b1"
 description = "Event sourcing in Python"
 optional = false
 python-versions = ">=3.11.0"
-groups = ["main", "dev"]
-files = []
-develop = true
+groups = ["main"]
+files = [
+    {file = "eventsourcing-9.6.0b1-py3-none-any.whl", hash = "sha256:d716d418989a38a6dc7947cc676f21961569e944462a3817d0e385a2a465cb98"},
+    {file = "eventsourcing-9.6.0b1.tar.gz", hash = "sha256:110243cb751cf2e0b708abe8a9cebef03b0ab5c4f5ea37a597c294a1155b2752"},
+]
 
 [package.dependencies]
 typing_extensions = "*"
@@ -258,10 +260,6 @@ typing_extensions = "*"
 crypto = ["pycryptodome (>=3.22)"]
 cryptography = ["cryptography (>=46.0.5)"]
 postgres = ["psycopg[pool] (>=3.2)"]
-
-[package.source]
-type = "directory"
-url = "../eventsourcing"
 
 [[package]]
 name = "googleapis-common-protos"
@@ -928,4 +926,4 @@ files = [
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11.0"
-content-hash = "84e73a545d8e2b025c4c9c4f26e9f928585be1627492db40b6a6f8672c0b91a3"
+content-hash = "f70a0ac330667435337ebd18cc2a5f6432d7a62f5b431f52c4da83c5c6866947"

@@ -4,7 +4,7 @@ import json
 import re
 import sys
 from typing import TYPE_CHECKING, Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import kurrentdbclient.exceptions
 from eventsourcing.persistence import (
@@ -91,16 +91,18 @@ class KurrentDBAggregateRecorder(AggregateRecorder):
         new_events: list[NewEvent] = []
         for stored_event in stored_events:
             if self.for_snapshotting:
-                metadata = json.dumps(
-                    {"originator_version": stored_event.originator_version}
-                ).encode("utf8")
+                # Inject "originator_version" in metadata.
+                metadata_dict = json.loads(stored_event.metadata.decode())
+                metadata_dict["originator_version"] = stored_event.originator_version
+                metadata = json.dumps(metadata_dict).encode("utf8")
             else:
-                metadata = b""
+                metadata = stored_event.metadata
             new_event = NewEvent(
                 type=stored_event.topic,
                 data=stored_event.state,
                 metadata=metadata,
                 content_type="application/octet-stream",
+                id=stored_event.event_id or uuid4(),
             )
             new_events.append(new_event)
 
@@ -189,17 +191,20 @@ class KurrentDBAggregateRecorder(AggregateRecorder):
         try:
             for ev in recorded_events:
                 if self.for_snapshotting:
-                    originator_version = json.loads(ev.metadata.decode("utf8"))[
-                        "originator_version"
-                    ]
+                    metadata_dict = json.loads(ev.metadata.decode("utf8"))
+                    originator_version = metadata_dict.pop("originator_version")
+                    metadata = json.dumps(metadata_dict).encode("utf-8")
                 else:
                     originator_version = ev.stream_position
+                    metadata = ev.metadata
 
                 se = StoredEvent(
                     originator_id=originator_id,
                     originator_version=originator_version,
                     topic=ev.type,
                     state=ev.data,
+                    metadata=metadata,
+                    event_id=ev.id,
                 )
                 stored_events.append(se)
         except kurrentdbclient.exceptions.NotFoundError:
@@ -215,6 +220,8 @@ class KurrentDBAggregateRecorder(AggregateRecorder):
             originator_version=recorded_event.stream_position,
             topic=recorded_event.type,
             state=recorded_event.data,
+            metadata=recorded_event.metadata,
+            event_id=recorded_event.id,
         )
 
     def _validate_uuid(self, stream_name: str) -> UUID | str:
@@ -320,7 +327,7 @@ class KurrentDBSubscription(Subscription[KurrentDBApplicationRecorder]):
                 # record non-UUID string IDs, and others subscribe from the
                 # start expecting everything will work. This will be removed
                 # once the tests are smoothed out.
-                continue
+                continue  # pragma: no cover
             else:
                 return notification
 

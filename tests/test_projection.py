@@ -14,13 +14,13 @@ from eventsourcing.domain import (
 )
 from eventsourcing.persistence import Tracking, TrackingRecorder
 from eventsourcing.popo import POPOTrackingRecorder
-from eventsourcing.projection import Projection
+from eventsourcing.projection import Projection, ProjectionRunner
 from eventsourcing.utils import get_topic
 
 from tests.common import INSECURE_CONNECTION_STRING
 
 
-class TrainingSchool(Application[UUID]):
+class TrainingSchool(Application):
     def register(self, name: str) -> int:
         dog = Dog(name)
         recordings = self.save(dog)
@@ -153,8 +153,6 @@ class TestProjection(TestCase):
 
         assert dog_details["name"] == dog_name
         assert dog_details["tricks"] == ("roll over", "play dead")
-
-        from eventsourcing.projection import ProjectionRunner
 
         with ProjectionRunner(
             application_class=TrainingSchool,

@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from eventsourcing.dispatch import singledispatchmethod
 from eventsourcing.persistence import Tracking
-from eventsourcing.projection import Projection
+from eventsourcing.projection import Projection, ProjectionRunner
 from eventsourcing.utils import get_topic
 
 from tests.common import INSECURE_CONNECTION_STRING
@@ -55,8 +55,6 @@ class TestProjection(TestCase):
 
         assert dog_details["name"] == dog_name
         assert dog_details["tricks"] == ("roll over", "play dead")
-
-        from eventsourcing.projection import ProjectionRunner
 
         with ProjectionRunner(
             application_class=DogSchool,

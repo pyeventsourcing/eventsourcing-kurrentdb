@@ -17,9 +17,9 @@ authors = [
     { "name" = "John Bywater", "email" = "john.bywater@appropriatesoftware.net" },
 ]
 classifiers = [
-#    "Development Status :: 3 - Alpha",
-#    "Development Status :: 4 - Beta",
-    "Development Status :: 5 - Production/Stable",
+    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
+#    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: BSD License",
     "Programming Language :: Python :: 3",
@@ -47,7 +47,7 @@ ruff = "*"
 pyright = "*"
 pycryptodome = "*"
 types-protobuf = "*"
-eventsourcing = {path = "../eventsourcing", develop = true}
+#eventsourcing = {path = "../eventsourcing", develop = true}
 
 [tool.black]
 line-length = 88
