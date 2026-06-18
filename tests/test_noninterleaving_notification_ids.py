@@ -17,7 +17,9 @@ class TestNonInterleaving(NonInterleavingNotificationIDsBaseCase):
         del self.client
 
     def create_recorder(self) -> ApplicationRecorder:
-        return KurrentDBApplicationRecorder(client=self.client)
+        recorder = KurrentDBApplicationRecorder(client=self.client)
+        recorder.validate_uuids = True
+        return recorder
 
 
 del NonInterleavingNotificationIDsBaseCase
