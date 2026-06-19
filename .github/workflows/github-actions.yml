@@ -12,10 +12,9 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
         docker-image:
-            - docker.eventstore.com/eventstore-ce/eventstoredb-ce:22.10.4-jammy
-            - docker.eventstore.com/eventstore-ce/eventstoredb-oss:23.10.2-jammy
-            - docker.eventstore.com/eventstore/eventstoredb-ee:24.10.0-x64-8.0-bookworm-slim
-            - docker.eventstore.com/kurrent-latest/kurrentdb:25.0.0-x64-8.0-bookworm-slim
+          - docker.kurrent.io/kurrent-latest/kurrentdb:25.1.0-x64-8.0-bookworm-slim
+          - kurrentplatform/kurrentdb:26.0.2
+          - kurrentplatform/kurrentdb:26.1.0
     env:
       DOCKER_IMAGE: ${{ matrix.docker-image }}
     runs-on: ubuntu-latest
