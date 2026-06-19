@@ -51,7 +51,7 @@ types-protobuf = "*"
 
 [tool.black]
 line-length = 88
-target-version = ["py39"]
+target-version = ["py311"]
 include = '\.pyi?$'
 preview = true
 exclude = '''
@@ -117,8 +117,8 @@ skip = ".eggs,.pip-cache,.poetry,venv,.venv,dist"
 line-length = 88
 #indent-width = 4
 
-# Assume Python 3.9
-target-version = "py39"
+# Assume Python 3.11
+target-version = "py311"
 
 [tool.ruff.lint]
 select = [
@@ -206,5 +206,5 @@ include = [
     "eventsourcing_kurrentdb",
     "tests",
 ]
-pythonVersion = "3.9"
+pythonVersion = "3.11"
 typeCheckingMode = "standard"
