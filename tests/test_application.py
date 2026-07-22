@@ -1,21 +1,22 @@
 import contextlib
-import json
 import os
 from decimal import Decimal
 from itertools import chain
 from uuid import uuid4
 
+import eventsourcing.domain
 import kurrentdbclient.exceptions
-from eventsourcing.application import Application, EventSourcedLog
-from eventsourcing.domain import Aggregate, DomainEvent, put_metadata_in_context
-from eventsourcing.persistence import InfrastructureFactoryError, PersistenceError
+from eventsourcing.application import EventSourcedLog
+from eventsourcing.domain import put_metadata_in_context
+from eventsourcing.errors import InfrastructureFactoryError, PersistenceError
 from eventsourcing.projection import ApplicationSubscription
+from eventsourcing.pydantic import Aggregate, AggregatesApplication, Decision
 from eventsourcing.system import NotificationLogReader
 from eventsourcing.tests.application import (
-    BankAccounts,
+    BankAccountsWithPydantic,
     ExampleApplicationTestCase,
 )
-from eventsourcing.tests.domain import BankAccount
+from eventsourcing.tests.bank_account_with_pydantic import BankAccountWithPydantic
 from eventsourcing.utils import get_topic
 
 from tests.common import INSECURE_CONNECTION_STRING
@@ -26,13 +27,17 @@ class TestApplicationWithKurrentDB(ExampleApplicationTestCase):
 
     def setUp(self) -> None:
         self.original_initial_version = Aggregate.INITIAL_VERSION
-        Aggregate.INITIAL_VERSION = 0
+        eventsourcing.domain.Aggregate.INITIAL_VERSION = (  # pyright: ignore[reportAttributeAccessIssue]
+            0
+        )
         super().setUp()
         os.environ["PERSISTENCE_MODULE"] = "eventsourcing_kurrentdb"
         os.environ["KURRENTDB_URI"] = INSECURE_CONNECTION_STRING
 
     def tearDown(self) -> None:
-        Aggregate.INITIAL_VERSION = self.original_initial_version
+        eventsourcing.domain.Aggregate.INITIAL_VERSION = (  # pyright: ignore[reportAttributeAccessIssue]
+            self.original_initial_version
+        )
         with contextlib.suppress(KeyError):
             del os.environ["PERSISTENCE_MODULE"]
         with contextlib.suppress(KeyError):
@@ -42,7 +47,7 @@ class TestApplicationWithKurrentDB(ExampleApplicationTestCase):
     def test_example_application(self) -> None:
         # NB, this test overrides ExampleApplicationTestCase.test_example_application.
 
-        app = BankAccounts(env={"IS_SNAPSHOTTING_ENABLED": "y"})
+        app = BankAccountsWithPydantic(env={"IS_SNAPSHOTTING_ENABLED": "y"})
 
         # Check the factory topic.
         self.assertEqual(get_topic(type(app.factory)), self.expected_factory_topic)
@@ -58,8 +63,8 @@ class TestApplicationWithKurrentDB(ExampleApplicationTestCase):
         self.assertEqual(len(notifications), 0)
 
         # Check AccountNotFound exception.
-        with self.assertRaises(BankAccounts.AccountNotFoundError):
-            app.get_account(uuid4())
+        with self.assertRaises(app.AccountNotFoundError):
+            app.get_account(str(uuid4()))
 
         # Open an account.
         account_id1 = app.open_account(
@@ -159,30 +164,32 @@ class TestApplicationWithKurrentDB(ExampleApplicationTestCase):
         self.assertEqual(len(notifications), 0)
 
         # Get historical version.
-        account: BankAccount = app.repository.get(account_id1, version=1)
+        account = app.repository.get(account_id1, BankAccountWithPydantic, version=1)
         self.assertEqual(account.version, 1)
         self.assertEqual(account.balance, Decimal("10.00"))
 
         # Take snapshot (don't specify version).
-        app.take_snapshot(account_id1)
+        app.take_snapshot(account_id1, BankAccountWithPydantic)
         assert app.snapshots
         snapshots = list(app.snapshots.get(account_id1))
         self.assertEqual(len(snapshots), 1)
         self.assertEqual(snapshots[0].originator_version, Aggregate.INITIAL_VERSION + 3)
 
         # Get historical version again (this won't use snapshots).
-        historical_account: BankAccount = app.repository.get(account_id1, version=1)
+        historical_account = app.repository.get(
+            account_id1, BankAccountWithPydantic, version=1
+        )
         self.assertEqual(historical_account.version, 1)
 
         # Get current version (this will use snapshots).
-        from_snapshot: BankAccount = app.repository.get(account_id1)
-        self.assertIsInstance(from_snapshot, BankAccount)
+        from_snapshot = app.repository.get(account_id1, BankAccountWithPydantic)
+        self.assertIsInstance(from_snapshot, BankAccountWithPydantic)
         self.assertEqual(from_snapshot.version, Aggregate.INITIAL_VERSION + 3)
         self.assertEqual(from_snapshot.balance, Decimal("65.00"))
 
         # Take snapshot (specify earlier version).
-        app.take_snapshot(account_id1, version=1)
-        app.take_snapshot(account_id1, version=2)
+        app.take_snapshot(account_id1, BankAccountWithPydantic, version=1)
+        app.take_snapshot(account_id1, BankAccountWithPydantic, version=2)
         snapshots = list(app.snapshots.get(account_id1))
 
         # Shouldn't have recorded historical snapshot (would append old after new).
@@ -224,7 +231,7 @@ class TestApplicationWithKurrentDB(ExampleApplicationTestCase):
         app.credit_account(account_id2, Decimal("30.00"))
 
         # Snapshot the account.
-        app.take_snapshot(account_id2)
+        app.take_snapshot(account_id2, BankAccountWithPydantic)
 
         # Check there are eight notifications since the initial commit position.
         notifications = app.notification_log.select(
@@ -235,7 +242,9 @@ class TestApplicationWithKurrentDB(ExampleApplicationTestCase):
         # Check the individual notifications.
         self.assertEqual(notifications[0].originator_id, account_id1)
         self.assertEqual(notifications[0].originator_version, 0)
-        self.assertTrue(notifications[0].topic.endswith("BankAccount.Opened"))
+        self.assertTrue(
+            notifications[0].topic.endswith("BankAccountWithPydantic.Opened")
+        )
         self.assertEqual(notifications[0].id, max_notification_id2)
         self.assertEqual(notifications[1].originator_id, account_id1)
         self.assertEqual(notifications[1].originator_version, 1)
@@ -250,7 +259,9 @@ class TestApplicationWithKurrentDB(ExampleApplicationTestCase):
         self.assertEqual(notifications[3].id, max_notification_id4)
         self.assertEqual(notifications[4].originator_id, account_id2)
         self.assertEqual(notifications[4].originator_version, 0)
-        self.assertTrue(notifications[4].topic.endswith("BankAccount.Opened"))
+        self.assertTrue(
+            notifications[4].topic.endswith("BankAccountWithPydantic.Opened")
+        )
         self.assertEqual(notifications[5].originator_id, account_id2)
         self.assertEqual(notifications[5].originator_version, 1)
         self.assertTrue(notifications[5].topic.endswith("TransactionAppended"))
@@ -309,7 +320,7 @@ class TestApplicationWithKurrentDB(ExampleApplicationTestCase):
             self.assertEqual(len(notifications), 12)
 
     def test_example_application_with_setting_metadata_context(self) -> None:
-        app = BankAccounts(env={"IS_SNAPSHOTTING_ENABLED": "y"})
+        app = BankAccountsWithPydantic(env={"IS_SNAPSHOTTING_ENABLED": "y"})
 
         # Check the factory topic.
         self.assertEqual(get_topic(type(app.factory)), self.expected_factory_topic)
@@ -325,8 +336,8 @@ class TestApplicationWithKurrentDB(ExampleApplicationTestCase):
         self.assertEqual(len(notifications), 0)
 
         # Check AccountNotFound exception.
-        with self.assertRaises(BankAccounts.AccountNotFoundError):
-            app.get_account(uuid4())
+        with self.assertRaises(app.AccountNotFoundError):
+            app.get_account(str(uuid4()))
 
         # Open an account.
         metadata = {
@@ -434,31 +445,33 @@ class TestApplicationWithKurrentDB(ExampleApplicationTestCase):
         self.assertEqual(len(notifications), 0)
 
         # Get historical version.
-        account: BankAccount = app.repository.get(account_id1, version=1)
+        account = app.repository.get(account_id1, BankAccountWithPydantic, version=1)
         self.assertEqual(account.version, 1)
         self.assertEqual(account.balance, Decimal("10.00"))
 
         # Take snapshot (don't specify version).
         with put_metadata_in_context(metadata):
-            app.take_snapshot(account_id1)
+            app.take_snapshot(account_id1, BankAccountWithPydantic)
         assert app.snapshots
         snapshots = list(app.snapshots.get(account_id1))
         self.assertEqual(len(snapshots), 1)
         self.assertEqual(snapshots[0].originator_version, Aggregate.INITIAL_VERSION + 3)
 
         # Get historical version again (this won't use snapshots).
-        historical_account: BankAccount = app.repository.get(account_id1, version=1)
+        historical_account = app.repository.get(
+            account_id1, BankAccountWithPydantic, version=1
+        )
         self.assertEqual(historical_account.version, 1)
 
         # Get current version (this will use snapshots).
-        from_snapshot: BankAccount = app.repository.get(account_id1)
-        self.assertIsInstance(from_snapshot, BankAccount)
+        from_snapshot = app.repository.get(account_id1, BankAccountWithPydantic)
+        self.assertIsInstance(from_snapshot, BankAccountWithPydantic)
         self.assertEqual(from_snapshot.version, Aggregate.INITIAL_VERSION + 3)
         self.assertEqual(from_snapshot.balance, Decimal("65.00"))
 
         # Take snapshot (specify earlier version).
-        app.take_snapshot(account_id1, version=1)
-        app.take_snapshot(account_id1, version=2)
+        app.take_snapshot(account_id1, BankAccountWithPydantic, version=1)
+        app.take_snapshot(account_id1, BankAccountWithPydantic, version=2)
         snapshots = list(app.snapshots.get(account_id1))
 
         # Shouldn't have recorded historical snapshot (would append old after new).
@@ -505,7 +518,7 @@ class TestApplicationWithKurrentDB(ExampleApplicationTestCase):
 
         # Snapshot the account.
         with put_metadata_in_context(metadata):
-            app.take_snapshot(account_id2)
+            app.take_snapshot(account_id2, BankAccountWithPydantic)
 
         # Check there are eight notifications since the initial commit position.
         notifications = app.notification_log.select(
@@ -516,39 +529,43 @@ class TestApplicationWithKurrentDB(ExampleApplicationTestCase):
         # Check the individual notifications.
         self.assertEqual(notifications[0].originator_id, account_id1)
         self.assertEqual(notifications[0].originator_version, 0)
-        self.assertTrue(notifications[0].topic.endswith("BankAccount.Opened"))
+        self.assertTrue(
+            notifications[0].topic.endswith("BankAccountWithPydantic.Opened")
+        )
         self.assertEqual(notifications[0].id, max_notification_id2)
-        self.assertEqual(json.loads(notifications[0].metadata)["user_id"], "user-1")
+        self.assertEqual(notifications[0].metadata["user_id"], "user-1")
         self.assertEqual(notifications[1].originator_id, account_id1)
         self.assertEqual(notifications[1].originator_version, 1)
         self.assertTrue(notifications[1].topic.endswith("TransactionAppended"))
         self.assertEqual(notifications[1].id, max_notification_id3)
-        self.assertEqual(json.loads(notifications[1].metadata)["user_id"], "user-1")
+        self.assertEqual(notifications[1].metadata["user_id"], "user-1")
         self.assertEqual(notifications[2].originator_id, account_id1)
         self.assertEqual(notifications[2].originator_version, 2)
         self.assertTrue(notifications[2].topic.endswith("TransactionAppended"))
-        self.assertEqual(json.loads(notifications[2].metadata)["user_id"], "user-1")
+        self.assertEqual(notifications[2].metadata["user_id"], "user-1")
         self.assertEqual(notifications[3].originator_id, account_id1)
         self.assertEqual(notifications[3].originator_version, 3)
         self.assertTrue(notifications[3].topic.endswith("TransactionAppended"))
         self.assertEqual(notifications[3].id, max_notification_id4)
-        self.assertEqual(json.loads(notifications[3].metadata)["user_id"], "user-1")
+        self.assertEqual(notifications[3].metadata["user_id"], "user-1")
         self.assertEqual(notifications[4].originator_id, account_id2)
         self.assertEqual(notifications[4].originator_version, 0)
-        self.assertTrue(notifications[4].topic.endswith("BankAccount.Opened"))
-        self.assertEqual(json.loads(notifications[4].metadata)["user_id"], "user-1")
+        self.assertTrue(
+            notifications[4].topic.endswith("BankAccountWithPydantic.Opened")
+        )
+        self.assertEqual(notifications[4].metadata["user_id"], "user-1")
         self.assertEqual(notifications[5].originator_id, account_id2)
         self.assertEqual(notifications[5].originator_version, 1)
         self.assertTrue(notifications[5].topic.endswith("TransactionAppended"))
-        self.assertEqual(json.loads(notifications[5].metadata)["user_id"], "user-1")
+        self.assertEqual(notifications[5].metadata["user_id"], "user-1")
         self.assertEqual(notifications[6].originator_id, account_id2)
         self.assertEqual(notifications[6].originator_version, 2)
         self.assertTrue(notifications[6].topic.endswith("TransactionAppended"))
-        self.assertEqual(json.loads(notifications[6].metadata)["user_id"], "user-1")
+        self.assertEqual(notifications[6].metadata["user_id"], "user-1")
         self.assertEqual(notifications[7].originator_id, account_id2)
         self.assertEqual(notifications[7].originator_version, 3)
         self.assertTrue(notifications[7].topic.endswith("TransactionAppended"))
-        self.assertEqual(json.loads(notifications[7].metadata)["user_id"], "user-1")
+        self.assertEqual(notifications[7].metadata["user_id"], "user-1")
 
         # Open another account.
         with put_metadata_in_context(metadata):
@@ -603,39 +620,39 @@ class TestApplicationWithKurrentDB(ExampleApplicationTestCase):
             self.assertEqual(len(notifications), 12)
 
     def test_event_sourced_log(self) -> None:
-        class LoggedEvent(DomainEvent):
+        class LoggedEvent(Decision):
             name: str
 
-        app = Application()
+        app = AggregatesApplication()
         log = EventSourcedLog(
             events=app.events,
-            originator_id=uuid4(),
-            logged_cls=LoggedEvent,
+            originator_id=str(uuid4()),
+            event_cls=LoggedEvent,
         )
         event = log.trigger_event(name="name1")
         app.save(event)
 
         events = list(log.get())
         self.assertEqual(len(events), 1)
-        self.assertEqual(events[0].name, "name1")
+        self.assertEqual(events[0].decision.name, "name1")
 
         event = log.trigger_event(name="name2")
         app.save(event)
 
         events = list(log.get())
         self.assertEqual(len(events), 2)
-        self.assertEqual(events[0].name, "name1")
-        self.assertEqual(events[1].name, "name2")
+        self.assertEqual(events[0].decision.name, "name1")
+        self.assertEqual(events[1].decision.name, "name2")
 
     def test_construct_without_uri(self) -> None:
         del os.environ["KURRENTDB_URI"]
         with self.assertRaises(InfrastructureFactoryError) as cm:
-            BankAccounts(env={"IS_SNAPSHOTTING_ENABLED": "y"})
+            BankAccountsWithPydantic(env={"IS_SNAPSHOTTING_ENABLED": "y"})
         self.assertIn("KURRENTDB_URI", str(cm.exception))
 
     def test_construct_secure_without_root_certificates(self) -> None:
         os.environ["KURRENTDB_URI"] = "esdb://admin:changeit@localhost"
-        app = BankAccounts(env={"IS_SNAPSHOTTING_ENABLED": "y"})
+        app = BankAccountsWithPydantic(env={"IS_SNAPSHOTTING_ENABLED": "y"})
         with self.assertRaises(PersistenceError) as cm:
             app.open_account(full_name="Bob", email_address="bob@example.com")
         self.assertIsInstance(cm.exception.args[0], kurrentdbclient.exceptions.SSLError)

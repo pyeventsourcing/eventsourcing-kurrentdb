@@ -2,14 +2,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Literal, cast
 
+from eventsourcing.errors import InfrastructureFactoryError
 from eventsourcing.persistence import (
     AggregateRecorder,
     ApplicationRecorder,
     InfrastructureFactory,
-    InfrastructureFactoryError,
     ProcessRecorder,
     TrackingRecorder,
 )
+from eventsourcing.utils import resolve_topic
 from kurrentdbclient import KurrentDBClient
 
 from eventsourcing_kurrentdb.recorders import (
@@ -47,7 +48,7 @@ class KurrentDBFactory(InfrastructureFactory[TrackingRecorder]):
         )
         originator_id_type = cast(
             Literal["uuid", "text"],
-            self.env.get(self.ORIGINATOR_ID_TYPE, "uuid"),
+            self.env.get(self.ORIGINATOR_ID_TYPE, "text"),
         )
         if originator_id_type.lower() not in ("uuid", "text"):
             msg = (
@@ -66,7 +67,16 @@ class KurrentDBFactory(InfrastructureFactory[TrackingRecorder]):
         return recorder
 
     def application_recorder(self) -> ApplicationRecorder:
-        recorder = KurrentDBApplicationRecorder(self.client)
+        application_recorder_topic = self.env.get(self.APPLICATION_RECORDER_TOPIC)
+        if application_recorder_topic:
+            application_recorder_class: type[KurrentDBApplicationRecorder] = (
+                resolve_topic(application_recorder_topic)
+            )
+            assert issubclass(application_recorder_class, KurrentDBApplicationRecorder)
+        else:
+            application_recorder_class = KurrentDBApplicationRecorder
+
+        recorder = application_recorder_class(self.client)
         recorder.validate_uuids = self.originator_id_type == "uuid"
         return recorder
 

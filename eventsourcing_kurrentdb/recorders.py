@@ -3,17 +3,17 @@ from __future__ import annotations
 import json
 import re
 import sys
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID, uuid4
 
 import kurrentdbclient.exceptions
+from eventsourcing.domain import NIL_UUID
+from eventsourcing.errors import PersistenceError, ProgrammingError
 from eventsourcing.persistence import (
     AggregateRecorder,
     ApplicationRecorder,
     IntegrityError,
     Notification,
-    PersistenceError,
-    ProgrammingError,
     StoredEvent,
     Subscription,
 )
@@ -92,17 +92,15 @@ class KurrentDBAggregateRecorder(AggregateRecorder):
         for stored_event in stored_events:
             if self.for_snapshotting:
                 # Inject "originator_version" in metadata.
-                metadata_dict = json.loads(stored_event.metadata.decode())
-                metadata_dict["originator_version"] = stored_event.originator_version
-                metadata = json.dumps(metadata_dict).encode("utf8")
-            else:
-                metadata = stored_event.metadata
+                stored_event.metadata["originator_version"] = str(
+                    stored_event.originator_version
+                )
             new_event = NewEvent(
                 type=stored_event.topic,
                 data=stored_event.state,
-                metadata=metadata,
+                metadata=json.dumps(stored_event.metadata).encode(),
                 content_type="application/octet-stream",
-                id=stored_event.event_id or uuid4(),
+                id=uuid4() if stored_event.uuid is NIL_UUID else stored_event.uuid,
             )
             new_events.append(new_event)
 
@@ -136,7 +134,7 @@ class KurrentDBAggregateRecorder(AggregateRecorder):
 
     def select_events(  # noqa: C901
         self,
-        originator_id: UUID | str,
+        originator_id: str,
         *,
         gt: int | None = None,
         lte: int | None = None,
@@ -190,21 +188,22 @@ class KurrentDBAggregateRecorder(AggregateRecorder):
         stored_events = []
         try:
             for ev in recorded_events:
-                if self.for_snapshotting:
+                try:
                     metadata_dict = json.loads(ev.metadata.decode("utf8"))
-                    originator_version = metadata_dict.pop("originator_version")
-                    metadata = json.dumps(metadata_dict).encode("utf-8")
+                except ValueError:  # pragma: no cover
+                    metadata_dict = {}
+                if self.for_snapshotting:
+                    originator_version = int(metadata_dict.pop("originator_version"))
                 else:
                     originator_version = ev.stream_position
-                    metadata = ev.metadata
 
                 se = StoredEvent(
                     originator_id=originator_id,
                     originator_version=originator_version,
                     topic=ev.type,
                     state=ev.data,
-                    metadata=metadata,
-                    event_id=ev.id,
+                    metadata=metadata_dict,
+                    uuid=ev.id,
                 )
                 stored_events.append(se)
         except kurrentdbclient.exceptions.NotFoundError:
@@ -214,21 +213,25 @@ class KurrentDBAggregateRecorder(AggregateRecorder):
 
     def construct_notification(self, recorded_event: RecordedEvent) -> Notification:
         assert recorded_event.commit_position is not None
+        try:
+            metadata_dict = json.loads(recorded_event.metadata.decode("utf8"))
+        except ValueError:  # pragma: no cover
+            metadata_dict = {}
         return Notification(
             id=recorded_event.commit_position,
             originator_id=self._validate_uuid(recorded_event.stream_name),
             originator_version=recorded_event.stream_position,
             topic=recorded_event.type,
             state=recorded_event.data,
-            metadata=recorded_event.metadata,
-            event_id=recorded_event.id,
+            metadata=metadata_dict,
+            uuid=recorded_event.id,
         )
 
-    def _validate_uuid(self, stream_name: str) -> UUID | str:
-        if self.validate_uuids:
+    def _validate_uuid(self, stream_name: str) -> str:
+        if self.validate_uuids:  # pragma: no cover
             # Catch a failure to reconstruct UUID, so we can see what didn't work.
             try:
-                return UUID(stream_name)
+                return cast(str, UUID(stream_name))
             except ValueError as e:
                 msg = f"{e}: {stream_name}"
                 raise BadlyFormedUUIDStringError(msg) from e

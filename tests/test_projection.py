@@ -1,28 +1,23 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from dataclasses import dataclass
 from typing import Any, TypedDict
 from unittest import TestCase
-from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
-from eventsourcing.application import Application
-from eventsourcing.dispatch import singledispatchmethod
-from eventsourcing.domain import (
-    Aggregate,
-    event,
-)
+from eventsourcing.domain import event
 from eventsourcing.persistence import Tracking, TrackingRecorder
 from eventsourcing.popo import POPOTrackingRecorder
 from eventsourcing.projection import Projection, ProjectionRunner
+from eventsourcing.pydantic import Aggregate, AggregatesApplication, Decision
 from eventsourcing.utils import get_topic
 
 from tests.common import INSECURE_CONNECTION_STRING
 
 
-class TrainingSchool(Application):
+class TrainingSchool(AggregatesApplication):
     def register(self, name: str) -> int:
-        dog = Dog(name)
+        dog = Dog(name=name)
         recordings = self.save(dog)
         return recordings[-1].notification.id
 
@@ -37,23 +32,21 @@ class TrainingSchool(Application):
         return {"name": dog.name, "tricks": tuple(dog.tricks)}
 
     def _get_dog(self, name: str) -> Dog:
-        return self.repository.get(Dog.create_id(name))
+        return self.repository.get(Dog.create_id(name), Dog)
 
 
 class Dog(Aggregate):
     INITIAL_VERSION = 0  # for KurrentDB
 
-    @dataclass(frozen=True)
-    class Registered(Aggregate.Created):
+    class Registered(Decision):
         name: str
 
-    @dataclass(frozen=True)
-    class TrickAdded(Aggregate.Event):
+    class TrickAdded(Decision):
         trick: str
 
     @staticmethod
-    def create_id(name: str) -> UUID:
-        return uuid5(NAMESPACE_URL, f"/dogs/{name}")
+    def create_id(name: str) -> str:
+        return str(uuid5(NAMESPACE_URL, f"/dogs/{name}"))
 
     @event(Registered)
     def __init__(self, name: str) -> None:
@@ -120,17 +113,12 @@ class CountProjection(Projection[CounterViewInterface]):
     def __init__(self, view: CounterViewInterface):
         super().__init__(view=view)
 
-    @singledispatchmethod
-    def process_event(self, event: Any, tracking: Tracking) -> None:
-        pass
-
-    @process_event.register
-    def aggregate_created(self, _: Dog.Registered, tracking: Tracking) -> None:
-        self.view.incr_dog_counter(tracking)
-
-    @process_event.register
-    def aggregate_event(self, _: Dog.TrickAdded, tracking: Tracking) -> None:
-        self.view.incr_trick_counter(tracking)
+    def process_event(self, envelope: Any, tracking: Tracking) -> None:
+        match envelope.decision:
+            case Dog.Registered():
+                self.view.incr_dog_counter(tracking)
+            case Dog.TrickAdded():
+                self.view.incr_trick_counter(tracking)
 
 
 class TestProjection(TestCase):

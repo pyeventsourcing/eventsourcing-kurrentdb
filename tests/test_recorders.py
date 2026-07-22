@@ -5,19 +5,18 @@ from typing import cast
 from uuid import uuid4
 
 import kurrentdbclient.exceptions
-from eventsourcing.domain import datetime_now_with_tzinfo
+from eventsourcing.domain import NIL_UUID, datetime_now_with_tzinfo
+from eventsourcing.errors import PersistenceError, ProgrammingError
 from eventsourcing.persistence import (
     AggregateRecorder,
     ApplicationRecorder,
-    PersistenceError,
-    ProgrammingError,
     StoredEvent,
 )
 from eventsourcing.tests.persistence import (
     AggregateRecorderTestCase,
     ApplicationRecorderTestCase,
 )
-from kurrentdbclient import KurrentDBClient, NewEvent, StreamState
+from kurrentdbclient import KurrentDBClient
 
 from eventsourcing_kurrentdb.recorders import (
     KurrentDBAggregateRecorder,
@@ -28,6 +27,7 @@ from tests.common import INSECURE_CONNECTION_STRING
 
 class TestKurrentDBAggregateRecorder(AggregateRecorderTestCase):
     INITIAL_VERSION = 0
+    recorder_supports_idempotent_appends = True
 
     def setUp(self) -> None:
         self.client = KurrentDBClient(INSECURE_CONNECTION_STRING)
@@ -46,27 +46,27 @@ class TestKurrentDBAggregateRecorder(AggregateRecorderTestCase):
         recorder = self.create_recorder()
 
         # Write three stored events.
-        originator_id1 = uuid4()
+        originator_id1 = str(uuid4())
         event1 = StoredEvent(
             originator_id=originator_id1,
             originator_version=self.INITIAL_VERSION,
             topic="topic1",
             state=b'{"state": "state1"}',
-            metadata=b'{"user_id": "user-1"}',
+            metadata={"user_id": "user-1"},
         )
         event2 = StoredEvent(
             originator_id=originator_id1,
             originator_version=self.INITIAL_VERSION + 1,
             topic="topic2",
             state=b'{"state": "state2"}',
-            metadata=b'{"user_id": "user-2"}',
+            metadata={"user_id": "user-2"},
         )
         event3 = StoredEvent(
             originator_id=originator_id1,
             originator_version=self.INITIAL_VERSION + 2,
             topic="topic3",
             state=b'{"state": "state3"}',
-            metadata=b'{"user_id": "user-3"}',
+            metadata={"user_id": "user-3"},
         )
 
         # Insert three events.
@@ -196,7 +196,7 @@ class TestKurrentDBAggregateRecorder(AggregateRecorderTestCase):
 
         # Select events with desc, lte (NO STREAM).
         self.assert_events_eq(  # reads from after end, limited by limit
-            recorder.select_events(uuid4(), desc=True, lte=10, limit=1),
+            recorder.select_events(str(uuid4()), desc=True, lte=10, limit=1),
             [],
         )
 
@@ -234,7 +234,7 @@ class TestKurrentDBAggregateRecorder(AggregateRecorderTestCase):
 
         # Select events with desc, gt (NO STREAM)
         self.assert_events_eq(  # reads until before end
-            recorder.select_events(uuid4(), desc=True, gt=1),
+            recorder.select_events(str(uuid4()), desc=True, gt=1),
             [],
         )
 
@@ -266,13 +266,13 @@ class TestKurrentDBAggregateRecorder(AggregateRecorderTestCase):
 
         # Can't store events in more than one stream.
         event4 = StoredEvent(
-            originator_id=uuid4(),
+            originator_id=str(uuid4()),
             originator_version=self.INITIAL_VERSION,
             topic="topic4",
             state=b'{"state": "state4"}',
         )
         event5 = StoredEvent(
-            originator_id=uuid4(),
+            originator_id=str(uuid4()),
             originator_version=self.INITIAL_VERSION,
             topic="topic5",
             state=b'{"state": "state5"}',
@@ -281,33 +281,33 @@ class TestKurrentDBAggregateRecorder(AggregateRecorderTestCase):
             recorder.insert_events([event4, event5])
 
         # Also check event_id is recovered from client-generated ID.
-        self.assertIsNone(event1.event_id)
-        self.assertIsNone(event2.event_id)
-        self.assertIsNone(event3.event_id)
+        self.assertEqual(event1.uuid, NIL_UUID)
+        self.assertEqual(event2.uuid, NIL_UUID)
+        self.assertEqual(event3.uuid, NIL_UUID)
         events = recorder.select_events(originator_id1)
         self.assertEqual(len(events), 3)
-        event_id1 = events[0].event_id
-        event_id2 = events[1].event_id
-        event_id3 = events[2].event_id
+        event_id1 = events[0].uuid
+        event_id2 = events[1].uuid
+        event_id3 = events[2].uuid
         self.assertNotEqual(event_id1, event_id2)
         self.assertNotEqual(event_id2, event_id3)
         self.assertNotEqual(event_id3, event_id1)
         events = recorder.select_events(originator_id1)
-        self.assertEqual(events[0].event_id, event_id1)
-        self.assertEqual(events[1].event_id, event_id2)
-        self.assertEqual(events[2].event_id, event_id3)
+        self.assertEqual(events[0].uuid, event_id1)
+        self.assertEqual(events[1].uuid, event_id2)
+        self.assertEqual(events[2].uuid, event_id3)
 
         # Also check event_id can be set.
         event6 = StoredEvent(
-            originator_id=uuid4(),
+            originator_id=str(uuid4()),
             originator_version=self.INITIAL_VERSION,
             topic="topic6",
             state=b'{"state": "state6"}',
-            event_id=uuid4(),
+            uuid=uuid4(),
         )
         recorder.insert_events([event6])
         events = recorder.select_events(event6.originator_id)
-        self.assertEqual(events[0].event_id, event6.event_id)
+        self.assertEqual(events[0].uuid, event6.uuid)
 
 
 class TestKurrentDBApplicationRecorder(ApplicationRecorderTestCase):
@@ -336,7 +336,7 @@ class TestKurrentDBApplicationRecorder(ApplicationRecorderTestCase):
         # super().test_insert_select()
 
         # Construct the recorder.
-        self.validate_uuids = True
+        # self.validate_uuids = True
         recorder = self.create_recorder()
 
         # Get the current max notification ID.
@@ -384,32 +384,32 @@ class TestKurrentDBApplicationRecorder(ApplicationRecorderTestCase):
         self.assertEqual(notification_ids, [])
 
         # Define three stored events with two different originator IDs.
-        originator_id1 = uuid4()
-        originator_id2 = uuid4()
+        originator_id1 = str(uuid4())
+        originator_id2 = str(uuid4())
 
         event1 = StoredEvent(
             originator_id=originator_id1,
             originator_version=self.INITIAL_VERSION,
             topic="topic1",
             state=b'{"state": "state1"}',
-            metadata=b'{"user_id": "user-1"}',
-            event_id=uuid4(),
+            metadata={"user_id": "user-1"},
+            uuid=uuid4(),
         )
         event2 = StoredEvent(
             originator_id=originator_id1,
             originator_version=self.INITIAL_VERSION + 1,
             topic="topic2",
             state=b'{"state": "state2"}',
-            metadata=b'{"user_id": "user-2"}',
-            event_id=uuid4(),
+            metadata={"user_id": "user-2"},
+            uuid=uuid4(),
         )
         event3 = StoredEvent(
             originator_id=originator_id2,
             originator_version=self.INITIAL_VERSION,
             topic="topic3",
             state=b'{"state": "state3"}',
-            metadata=b'{"user_id": "user-3"}',
-            event_id=uuid4(),
+            metadata={"user_id": "user-3"},
+            uuid=uuid4(),
         )
 
         # Insert two events.
@@ -483,10 +483,10 @@ class TestKurrentDBApplicationRecorder(ApplicationRecorderTestCase):
             max_notification_id1, 10, inclusive_of_start=False
         )
         self.assert_events_eq(notifications, [event1, event2, event3])
-        self.assertEqual(notifications[0].event_id, event1.event_id)
-        self.assertEqual(notifications[1].event_id, event2.event_id)
+        self.assertEqual(notifications[0].uuid, event1.uuid)
+        self.assertEqual(notifications[1].uuid, event2.uuid)
         self.assertEqual(notifications[1].id, max_notification_id2)
-        self.assertEqual(notifications[2].event_id, event3.event_id)
+        self.assertEqual(notifications[2].uuid, event3.uuid)
         self.assertEqual(notifications[2].id, max_notification_id3)
 
         # Select notification by topic (all topics).
@@ -500,9 +500,9 @@ class TestKurrentDBApplicationRecorder(ApplicationRecorderTestCase):
         # Check we got three notifications.
         self.assert_events_eq(notifications, [event1, event2, event3])
         # Check the event_id values are getting returned.
-        self.assertEqual(notifications[0].event_id, event1.event_id)
-        self.assertEqual(notifications[1].event_id, event2.event_id)
-        self.assertEqual(notifications[2].event_id, event3.event_id)
+        self.assertEqual(notifications[0].uuid, event1.uuid)
+        self.assertEqual(notifications[1].uuid, event2.uuid)
+        self.assertEqual(notifications[2].uuid, event3.uuid)
 
         # Select notification by topic (topic1 only).
         self.assert_events_eq(
@@ -581,23 +581,23 @@ class TestKurrentDBApplicationRecorder(ApplicationRecorderTestCase):
             [event1, event2],
         )
 
-        # Cover exception handling when stream name is not a UUID.
-        max_notification_id4 = recorder.max_notification_id()
-        assert isinstance(max_notification_id4, int)
-
-        cast(KurrentDBApplicationRecorder, recorder).client.append_to_stream(
-            stream_name=f"not-a-uuid-{uuid4()}",
-            events=NewEvent(type="SomethingHappened", data=b"{}"),
-            current_version=StreamState.NO_STREAM,
-        )
-        with self.assertRaises(ValueError) as cm1:
-            recorder.select_notifications(
-                start=max_notification_id4,
-                limit=10,
-                stop=max_notification_id2,
-                inclusive_of_start=False,
-            )
-        self.assertIn("badly formed hexadecimal UUID string", str(cm1.exception))
+        # # Cover exception handling when stream name is not a UUID.
+        # max_notification_id4 = recorder.max_notification_id()
+        # assert isinstance(max_notification_id4, int)
+        #
+        # cast(KurrentDBApplicationRecorder, recorder).client.append_to_stream(
+        #     stream_name=f"not-a-uuid-{uuid4()}",
+        #     events=NewEvent(type="SomethingHappened", data=b"{}"),
+        #     current_version=StreamState.NO_STREAM,
+        # )
+        # with self.assertRaises(ValueError) as cm1:
+        #     recorder.select_notifications(
+        #         start=max_notification_id4,
+        #         limit=10,
+        #         stop=max_notification_id2,
+        #         inclusive_of_start=False,
+        #     )
+        # self.assertIn("badly formed hexadecimal UUID string", str(cm1.exception))
 
         # Cover non-wrong-current-version exception handling when appending events.
         cast(KurrentDBApplicationRecorder, recorder).client.close()
@@ -612,7 +612,7 @@ class TestKurrentDBApplicationRecorder(ApplicationRecorderTestCase):
         super().test_concurrent_no_conflicts(initial_position)
 
     def test_insert_subscribe(self) -> None:
-        self.validate_uuids = True
+        # self.validate_uuids = True
         super().optional_test_insert_subscribe()
 
     def test_subscribe_concurrent_reading_and_writing(self) -> None:
@@ -640,7 +640,7 @@ class TestKurrentDBApplicationRecorder(ApplicationRecorderTestCase):
         def write() -> None:
             start = datetime_now_with_tzinfo()
             for _ in range(num_batches):
-                originator_id = uuid4()
+                originator_id = str(uuid4())
                 events = []
                 for i in range(batch_size):
                     event = StoredEvent(

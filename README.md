@@ -29,19 +29,16 @@ package expects the `originator_version` of the first event in an aggregate sequ
 to be `0`, so you must set `INITIAL_VERSION` on your aggregate classes to `0`.
 
 ```python
-from __future__ import annotations
-
-from dataclasses import dataclass
 from typing import TypedDict
 from uuid import NAMESPACE_URL, UUID, uuid5
 
-from eventsourcing.application import Application
-from eventsourcing.domain import Aggregate, event
+from eventsourcing.domain import event
+from eventsourcing.pydantic import Aggregate, AggregatesApplication, Decision
 
 
-class TrainingSchool(Application):
+class TrainingSchool(AggregatesApplication):
     def register(self, name: str) -> int:
-        dog = Dog(name)
+        dog = Dog(name=name)
         recordings = self.save(dog)
         return recordings[-1].notification.id
 
@@ -56,7 +53,8 @@ class TrainingSchool(Application):
         return {"name": dog.name, "tricks": tuple(dog.tricks)}
 
     def _get_dog(self, name: str) -> Dog:
-        return self.repository.get(Dog.create_id(name))
+        dog_id = Dog.create_id(name)
+        return self.repository.get(dog_id, Dog)
 
 
 class Dog(Aggregate):
@@ -66,12 +64,10 @@ class Dog(Aggregate):
     def create_id(name: str) -> UUID:
         return uuid5(NAMESPACE_URL, f"/dogs/{name}")
 
-    @dataclass(frozen=True)
-    class Registered(Aggregate.Created):
+    class Registered(Decision):
         name: str
 
-    @dataclass(frozen=True)
-    class TrickAdded(Aggregate.Event):
+    class TrickAdded(Decision):
         trick: str
 
     @event(Registered)
@@ -247,17 +243,12 @@ class CountProjection(Projection[MaterialisedViewInterface]):
         get_topic(Dog.TrickAdded),
     )
 
-    @singledispatchmethod
-    def process_event(self, event: Any, tracking: Tracking) -> None:
-        pass
-
-    @process_event.register
-    def dog_registered(self, _: Dog.Registered, tracking: Tracking) -> None:
-        self.view.incr_dog_counter(tracking)
-
-    @process_event.register
-    def trick_added(self, _: Dog.TrickAdded, tracking: Tracking) -> None:
-        self.view.incr_trick_counter(tracking)
+    def process_event(self, envelope: Any, tracking: Tracking) -> None:
+        match envelope.decision:
+            case Dog.Registered():
+                self.view.incr_dog_counter(tracking)
+            case Dog.TrickAdded():
+                self.view.incr_trick_counter(tracking)
 ```
 
 Run the projection with the `ProjectionRunner` class from the `eventsourcing` library.
