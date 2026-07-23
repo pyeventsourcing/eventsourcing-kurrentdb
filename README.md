@@ -35,7 +35,7 @@ from eventsourcing.domain import event
 from eventsourcing.pydantic import Aggregate, AggregatesApplication, Decision
 
 
-# Event model, expressed as pure business decision.
+# Event model, expressed as pure business decisions.
 
 class DogRegistered(Decision):
     name: str
