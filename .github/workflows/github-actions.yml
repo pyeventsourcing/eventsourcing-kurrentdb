@@ -14,7 +14,7 @@ jobs:
         docker-image:
           - docker.kurrent.io/kurrent-latest/kurrentdb:25.1.0-x64-8.0-bookworm-slim
           - kurrentplatform/kurrentdb:26.0.2
-          - kurrentplatform/kurrentdb:26.1.0
+          - kurrentplatform/kurrentdb:26.1.1
     env:
       DOCKER_IMAGE: ${{ matrix.docker-image }}
     runs-on: ubuntu-latest
