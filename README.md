@@ -9,8 +9,7 @@ This is an extension package for the Python [eventsourcing](https://github.com/p
 that provides a persistence module for [KurrentDB and EventStoreDB](https://www.kurrent.io).
 It uses the [kurrentdbclient](https://github.com/pyeventsourcing/kurrentdbclient)
 package to communicate with KurrentDB via the gRPC interface. It is tested with
-KurrentDB 25.0 and three previous LTS versions of EventStoreDB (24.10, 23.10, and 22.10)
-across Python versions 3.9 to 3.13.
+KurrentDB 25.1, 26.0, 26.1, across Python versions 3.11 to 3.14.
 
 ## Installation
 
@@ -29,48 +28,33 @@ package expects the `originator_version` of the first event in an aggregate sequ
 to be `0`, so you must set `INITIAL_VERSION` on your aggregate classes to `0`.
 
 ```python
-from typing import TypedDict
-from uuid import NAMESPACE_URL, UUID, uuid5
+from typing import TypedDict, Any
+from uuid import uuid4
 
 from eventsourcing.domain import event
 from eventsourcing.pydantic import Aggregate, AggregatesApplication, Decision
 
 
-class TrainingSchool(AggregatesApplication):
-    def register(self, name: str) -> int:
-        dog = Dog(name=name)
-        recordings = self.save(dog)
-        return recordings[-1].notification.id
+# Event model, expressed as pure business decision.
 
-    def add_trick(self, name: str, trick: str) -> int:
-        dog = self._get_dog(name)
-        dog.add_trick(trick)
-        recordings = self.save(dog)
-        return recordings[-1].notification.id
+class DogRegistered(Decision):
+    name: str
 
-    def get_dog_details(self, name: str) -> DogDetails:
-        dog = self._get_dog(name)
-        return {"name": dog.name, "tricks": tuple(dog.tricks)}
 
-    def _get_dog(self, name: str) -> Dog:
-        dog_id = Dog.create_id(name)
-        return self.repository.get(dog_id, Dog)
+class TrickAdded(Decision):
+    trick: str
 
+
+# Decision model, expressed as an event-sourced aggregate.
 
 class Dog(Aggregate):
     INITIAL_VERSION = 0  # for KurrentDB
 
     @staticmethod
-    def create_id(name: str) -> UUID:
-        return uuid5(NAMESPACE_URL, f"/dogs/{name}")
+    def create_id() -> str:
+        return f"dog-{uuid4()!s}"
 
-    class Registered(Decision):
-        name: str
-
-    class TrickAdded(Decision):
-        trick: str
-
-    @event(Registered)
+    @event(DogRegistered)
     def __init__(self, name: str) -> None:
         self.name = name
         self.tricks: list[str] = []
@@ -80,21 +64,43 @@ class Dog(Aggregate):
         self.tricks.append(trick)
 
 
+# Command and query handlers, expressed as module-level functions.
+
+def register_dog(app: AggregatesApplication, name: str) -> tuple[str, int]:
+    dog = Dog(name=name)
+    recordings = app.save(dog)
+    return (dog.id, recordings[-1].notification.id)
+
+def add_trick(app: AggregatesApplication, dog_id: str, trick: str) -> int:
+    dog = app.repository.get(dog_id, Dog)
+    dog.add_trick(trick)
+    recordings = app.save(dog)
+    return recordings[-1].notification.id
+
+def get_dog_details(app: AggregatesApplication, dog_id: str) -> DogDetails:
+    dog = app.repository.get(dog_id, Dog)
+    return {"name": dog.name, "tricks": tuple(dog.tricks)}
+
+
 class DogDetails(TypedDict):
     name: str
     tricks: tuple[str, ...]
+
+
+# Binding to infrastructure, expressing the name of the bounded context.
+
+class TrainingSchool(AggregatesApplication):
+    name = "training_school"
 ```
 
-## String IDs
-
-If you want to use Python strings as your aggregate IDs, then please read
-[this example](https://eventsourcing.readthedocs.io/en/stable/topics/examples/aggregate11.html)
-in the Python eventsourcing library docs.
-
+In this example, the commands and queries are defined with module-level functions. If
+you prefer, you can nest the functions under the application class as object methods,
+or alternatively define command handler and query handler classes.
 
 ## Configuring the application to use KurrentDB
 
-Configure the `TrainingSchool` application to use KurrentDB with environment variables.
+We need to configure the application infrastructure to use KurrentDB.
+
 You can configure an application with environment variables by setting them in the
 operating system environment, or by using the application constructor argument `env`,
 or by setting the application class attribute `env`.
@@ -104,10 +110,11 @@ KurrentDB connection  string URI. This value will be used as the `uri` argument 
 the `KurrentDBClient` class is constructed by this package.
 
 ```python
-import os
+kurrentdb_env = {
+    "TRAINING_SCHOOL_PERSISTENCE_MODULE": "eventsourcing_kurrentdb",
+    "TRAINING_SCHOOL_KURRENTDB_URI": "esdb://localhost:2113?Tls=false",
+}
 
-os.environ["TRAININGSCHOOL_PERSISTENCE_MODULE"] = "eventsourcing_kurrentdb"
-os.environ["KURRENTDB_URI"] = "esdb://localhost:2113?Tls=false"
 ```
 
 If you are connecting to a "secure" KurrentDB server, and if
@@ -119,7 +126,9 @@ This value will be used as the `root_certificates` argument when the
 `KurrentDBClient` class is constructed by this package.
 
 ```python
-os.environ["KURRENTDB_ROOT_CERTIFICATES"] = "<PEM encoded SSL/TLS root certificates>"
+kurrentdb_env[
+    "TRAINING_SCHOOL_KURRENTDB_ROOT_CERTIFICATES"
+] = "<PEM encoded SSL/TLS root certificates>"
 ```
 
 Please refer to the [kurrentdbclient](https://github.com/pyeventsourcing/kurrentdbclient)
@@ -131,27 +140,31 @@ in the client when connecting to a "secure" KurrentDB server.
 After configuring environment variables, construct the application.
 
 ```python
-training_school = TrainingSchool()
+app = TrainingSchool(kurrentdb_env)
 ```
 
-Call application methods from tests and user interfaces.
+Call application methods from tests and user interfaces. The returned
+`commit_position` values can be used to wait for eventually-consistent
+read models.
 
 ```python
-training_school.register("Fido")
-training_school.add_trick("Fido", "roll over")
-training_school.add_trick("Fido", "play dead")
-dog_details = training_school.get_dog_details("Fido")
+(dog_id, commit_position) = register_dog(app, "Fido")
+commit_position = add_trick(app, dog_id, "roll over")
+commit_position = add_trick(app, dog_id, "play dead")
+
+dog_details = get_dog_details(app, dog_id)
 assert dog_details["name"] == "Fido"
 assert dog_details["tricks"] == ("roll over", "play dead")
 ```
 
-To see the events have been saved in KurrentDB, we can reconstruct the application
+To check the events have been durably saved in KurrentDB, rather then just in
+the application Python object, we can construct another instance of the application
 and get Fido's details again.
 
 ```python
-training_school = TrainingSchool()
+app = TrainingSchool(kurrentdb_env)
 
-dog_details = training_school.get_dog_details("Fido")
+dog_details = get_dog_details(app, dog_id)
 
 assert dog_details["name"] == "Fido"
 assert dog_details["tricks"] == ("roll over", "play dead")
@@ -225,29 +238,28 @@ class InMemoryMaterialiseView(POPOTrackingRecorder, MaterialisedViewInterface):
 
 Define how events will be processed using the `Projection` class from the `eventsourcing` library.
 
-The example below processes `Dog` events. The `Dog.Registered` events are processed
-by calling `incr_dog_counter()` on the materialised view. The `Dog.TrickAdded` events
+The example below processes `Dog` events. The `DogRegistered` events are processed
+by calling `incr_dog_counter()` on the materialised view. The `TrickAdded` events
 are processed by calling `incr_trick_counter()`.
 
 ```python
 from typing import Any
 
-from eventsourcing.dispatch import singledispatchmethod
 from eventsourcing.projection import Projection
 from eventsourcing.utils import get_topic
 
 
 class CountProjection(Projection[MaterialisedViewInterface]):
     topics = (
-        get_topic(Dog.Registered),
-        get_topic(Dog.TrickAdded),
+        get_topic(DogRegistered),
+        get_topic(TrickAdded),
     )
 
     def process_event(self, envelope: Any, tracking: Tracking) -> None:
         match envelope.decision:
-            case Dog.Registered():
+            case DogRegistered():
                 self.view.incr_dog_counter(tracking)
-            case Dog.TrickAdded():
+            case TrickAdded():
                 self.view.incr_trick_counter(tracking)
 ```
 
@@ -267,6 +279,7 @@ with ProjectionRunner(
     application_class=TrainingSchool,
     projection_class=CountProjection,
     view_class=InMemoryMaterialiseView,
+    env=kurrentdb_env,
 ) as runner:
 
     # Get "read model" instance from runner, because
@@ -275,8 +288,8 @@ with ProjectionRunner(
 
     # Wait for the existing events to be processed.
     materialised_view.wait(
-        application_name=training_school.name,
-        notification_id=training_school.recorder.max_notification_id(),
+        application_name=app.name,
+        notification_id=commit_position,
         timeout=5.0,
     )
 
@@ -285,12 +298,12 @@ with ProjectionRunner(
     trick_count = materialised_view.get_trick_counter()
 
     # Record another event in "write model".
-    notification_id = training_school.add_trick("Fido", "sit and stay")
+    commit_position = add_trick(app, dog_id, "sit and stay")
 
     # Wait for the new event to be processed.
     materialised_view.wait(
-        application_name=training_school.name,
-        notification_id=notification_id,
+        application_name=app.name,
+        notification_id=commit_position,
         timeout=5.0,
     )
 
@@ -299,12 +312,12 @@ with ProjectionRunner(
     assert trick_count + 1 == materialised_view.get_trick_counter()
 
     # Write another event.
-    notification_id = training_school.add_trick("Fido", "jump hoop")
+    commit_position = add_trick(app, dog_id, "jump hoop")
 
     # Wait for the new event to be processed.
     materialised_view.wait(
-        training_school.name,
-        notification_id,
+        application_name=app.name,
+        notification_id=commit_position,
         timeout=5.0,
     )
 
