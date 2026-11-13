@@ -88,7 +88,6 @@ class KurrentDBFactory(InfrastructureFactory[TrackingRecorder]):
     def process_recorder(self) -> ProcessRecorder:
         raise NotImplementedError
 
-    def __del__(self) -> None:
+    def close(self) -> None:
         if hasattr(self, "client"):
-            del self.client
-            # self.client.close()
+            self.client.close()

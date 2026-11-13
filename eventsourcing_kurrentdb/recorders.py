@@ -12,10 +12,10 @@ from eventsourcing.errors import PersistenceError, ProgrammingError
 from eventsourcing.persistence import (
     AggregateRecorder,
     ApplicationRecorder,
+    ApplicationRecorderSubscription,
     IntegrityError,
     Notification,
     StoredEvent,
-    Subscription,
 )
 from kurrentdbclient import (
     DEFAULT_EXCLUDE_FILTER,
@@ -46,13 +46,13 @@ class KurrentDBAggregateRecorder(AggregateRecorder):
 
     def insert_events(
         self, stored_events: Sequence[StoredEvent], **kwargs: Any
-    ) -> Sequence[int] | None:
+    ) -> int | None:
         self._insert_events(stored_events, **kwargs)
         return None
 
     def _insert_events(  # noqa: C901
         self, stored_events: Sequence[StoredEvent], **kwargs: Any
-    ) -> Sequence[int] | None:
+    ) -> int | None:
         if self.for_snapshotting:
             # Protect against appending old snapshot after new.
             assert len(stored_events) == 1, len(stored_events)
@@ -68,12 +68,12 @@ class KurrentDBAggregateRecorder(AggregateRecorder):
                 and recorded_snapshots[0].originator_version
                 > stored_events[0].originator_version
             ):
-                return []
+                return None
         else:
             # Make sure all stored events have same originator ID.
             set_of_originator_ids = {e.originator_id for e in stored_events}
             if len(set_of_originator_ids) == 0:
-                return []
+                return None
             if len(set_of_originator_ids) > 1:
                 msg = "KurrentDB can't atomically store events in more than one stream"
                 raise ProgrammingError(msg)
@@ -127,7 +127,7 @@ class KurrentDBAggregateRecorder(AggregateRecorder):
             raise IntegrityError(e) from e
         except Exception as e:
             raise PersistenceError(e) from e
-        return [commit_position] * len(new_events)  # The best we can do?
+        return commit_position
 
     def create_snapshot_stream_name(self, stream_name: str) -> str:
         return self.SNAPSHOT_STREAM_PREFIX + stream_name
@@ -245,7 +245,7 @@ class BadlyFormedUUIDStringError(ValueError):
 class KurrentDBApplicationRecorder(KurrentDBAggregateRecorder, ApplicationRecorder):
     def insert_events(
         self, stored_events: Sequence[StoredEvent], **kwargs: Any
-    ) -> Sequence[int] | None:
+    ) -> int | None:
         return self._insert_events(stored_events, **kwargs)
 
     def select_notifications(
@@ -300,11 +300,13 @@ class KurrentDBApplicationRecorder(KurrentDBAggregateRecorder, ApplicationRecord
 
     def subscribe(
         self, gt: int | None = None, topics: Sequence[str] = ()
-    ) -> Subscription[ApplicationRecorder]:
+    ) -> ApplicationRecorderSubscription[ApplicationRecorder]:
         return KurrentDBSubscription(recorder=self, gt=gt, topics=topics)
 
 
-class KurrentDBSubscription(Subscription[KurrentDBApplicationRecorder]):
+class KurrentDBSubscription(
+    ApplicationRecorderSubscription[KurrentDBApplicationRecorder]
+):
     def __init__(
         self,
         recorder: KurrentDBApplicationRecorder,

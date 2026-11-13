@@ -9,7 +9,7 @@ This is an extension package for the Python [eventsourcing](https://github.com/p
 that provides a persistence module for [KurrentDB and EventStoreDB](https://www.kurrent.io).
 It uses the [kurrentdbclient](https://github.com/pyeventsourcing/kurrentdbclient)
 package to communicate with KurrentDB via the gRPC interface. It is tested with
-KurrentDB 25.1, 26.0, 26.1, across Python versions 3.11 to 3.14.
+KurrentDB 25.1, 26.0, 26.1, across Python versions 3.12 to 3.15.
 
 ## Installation
 
@@ -31,8 +31,13 @@ to be `0`, so you must set `INITIAL_VERSION` on your aggregate classes to `0`.
 from typing import TypedDict, Any
 from uuid import uuid4
 
-from eventsourcing.domain import event
-from eventsourcing.pydantic import Aggregate, AggregatesApplication, Decision
+from eventsourcing.decorator import event
+from eventsourcing.pydantic import (
+    Aggregate,
+    AggregatesApplication,
+    AggregateEvent,
+    Decision,
+)
 
 
 # Event model, expressed as pure business decisions.
@@ -68,14 +73,16 @@ class Dog(Aggregate):
 
 def register_dog(app: AggregatesApplication, name: str) -> tuple[str, int]:
     dog = Dog(name=name)
-    recordings = app.save(dog)
-    return (dog.id, recordings[-1].notification.id)
+    notification_id = app.save(dog)
+    assert notification_id is not None
+    return (dog.id, notification_id)
 
 def add_trick(app: AggregatesApplication, dog_id: str, trick: str) -> int:
     dog = app.repository.get(dog_id, Dog)
     dog.add_trick(trick)
-    recordings = app.save(dog)
-    return recordings[-1].notification.id
+    notification_id = app.save(dog)
+    assert notification_id is not None
+    return notification_id
 
 def get_dog_details(app: AggregatesApplication, dog_id: str) -> DogDetails:
     dog = app.repository.get(dog_id, Dog)
@@ -90,7 +97,7 @@ class DogDetails(TypedDict):
 # Binding to infrastructure, expressing the name of the bounded context.
 
 class TrainingSchool(AggregatesApplication):
-    name = "training_school"
+    context_name = "training_school"
 ```
 
 In this example, the commands and queries are defined with module-level functions. If
@@ -140,7 +147,7 @@ in the client when connecting to a "secure" KurrentDB server.
 After configuring environment variables, construct the application.
 
 ```python
-app = TrainingSchool(kurrentdb_env)
+app = TrainingSchool(env=kurrentdb_env)
 ```
 
 Call application methods from tests and user interfaces. The returned
@@ -162,7 +169,7 @@ the application Python object, we can construct another instance of the applicat
 and get Fido's details again.
 
 ```python
-app = TrainingSchool(kurrentdb_env)
+app = TrainingSchool(env=kurrentdb_env)
 
 dog_details = get_dog_details(app, dog_id)
 
@@ -245,11 +252,11 @@ are processed by calling `incr_trick_counter()`.
 ```python
 from typing import Any
 
-from eventsourcing.projection import Projection
+from eventsourcing.projection import EventProcessor
 from eventsourcing.utils import get_topic
 
 
-class CountProjection(Projection[MaterialisedViewInterface]):
+class CountProjection(EventProcessor[AggregateEvent, MaterialisedViewInterface]):
     topics = (
         get_topic(DogRegistered),
         get_topic(TrickAdded),
@@ -277,18 +284,18 @@ from eventsourcing.projection import ProjectionRunner
 
 with ProjectionRunner(
     application_class=TrainingSchool,
-    projection_class=CountProjection,
+    event_processor_class=CountProjection,
     view_class=InMemoryMaterialiseView,
     env=kurrentdb_env,
 ) as runner:
 
     # Get "read model" instance from runner, because
     # state of materialised view is stored in memory.
-    materialised_view = runner.projection.view
+    materialised_view = runner.view
 
     # Wait for the existing events to be processed.
     materialised_view.wait(
-        application_name=app.name,
+        context_name=app.context_name,
         notification_id=commit_position,
         timeout=5.0,
     )
@@ -302,7 +309,7 @@ with ProjectionRunner(
 
     # Wait for the new event to be processed.
     materialised_view.wait(
-        application_name=app.name,
+        context_name=app.context_name,
         notification_id=commit_position,
         timeout=5.0,
     )
@@ -316,7 +323,7 @@ with ProjectionRunner(
 
     # Wait for the new event to be processed.
     materialised_view.wait(
-        application_name=app.name,
+        context_name=app.context_name,
         notification_id=commit_position,
         timeout=5.0,
     )

@@ -1,21 +1,20 @@
 from __future__ import annotations
 
 from concurrent.futures.thread import ThreadPoolExecutor
-from typing import cast
 from uuid import uuid4
 
 import kurrentdbclient.exceptions
-from eventsourcing.domain import NIL_UUID, datetime_now_with_tzinfo
+from eventsourcing.domain import NIL_UUID
 from eventsourcing.errors import PersistenceError, ProgrammingError
 from eventsourcing.persistence import (
     AggregateRecorder,
-    ApplicationRecorder,
     StoredEvent,
 )
 from eventsourcing.tests.persistence import (
     AggregateRecorderTestCase,
     ApplicationRecorderTestCase,
 )
+from eventsourcing.timestamp import datetime_now_with_tzinfo
 from kurrentdbclient import KurrentDBClient
 
 from eventsourcing_kurrentdb.recorders import (
@@ -310,7 +309,9 @@ class TestKurrentDBAggregateRecorder(AggregateRecorderTestCase):
         self.assertEqual(events[0].uuid, event6.uuid)
 
 
-class TestKurrentDBApplicationRecorder(ApplicationRecorderTestCase):
+class TestKurrentDBApplicationRecorder(
+    ApplicationRecorderTestCase[KurrentDBApplicationRecorder]
+):
     INITIAL_VERSION = 0
     EXPECT_CONTIGUOUS_NOTIFICATION_IDS = False
 
@@ -324,7 +325,7 @@ class TestKurrentDBApplicationRecorder(ApplicationRecorderTestCase):
         del self.client
         # Aggregate.INITIAL_VERSION = self.original_initial_version
 
-    def create_recorder(self) -> ApplicationRecorder:
+    def create_recorder(self) -> KurrentDBApplicationRecorder:
         recorder = KurrentDBApplicationRecorder(client=self.client)
         recorder.validate_uuids = self.validate_uuids
         return recorder
@@ -380,8 +381,8 @@ class TestKurrentDBApplicationRecorder(ApplicationRecorderTestCase):
         )
 
         # Check inserting an empty list gives an empty list of notification IDs.
-        notification_ids = recorder.insert_events([])
-        self.assertEqual(notification_ids, [])
+        notification_id = recorder.insert_events([])
+        self.assertEqual(notification_id, None)
 
         # Define three stored events with two different originator IDs.
         originator_id1 = str(uuid4())
@@ -413,36 +414,32 @@ class TestKurrentDBApplicationRecorder(ApplicationRecorderTestCase):
         )
 
         # Insert two events.
-        notification_ids = recorder.insert_events([event1, event2])
+        notification_id = recorder.insert_events([event1, event2])
 
-        # Check we got two event notification IDs.
-        assert notification_ids is not None
-        self.assertEqual(len(notification_ids), 2)
+        # Check we got a notification ID.
+        assert notification_id is not None
 
         # Check they are larger than the initial max notification ID.
-        self.assertGreater(notification_ids[0], max_notification_id1)
-        self.assertGreater(notification_ids[1], max_notification_id1)
+        self.assertGreater(notification_id, max_notification_id1)
 
         # Check the last one is the same as the current max notification ID.
         max_notification_id2 = recorder.max_notification_id()
         assert isinstance(max_notification_id2, int)
-
-        self.assertEqual(notification_ids[-1], max_notification_id2)
+        self.assertEqual(notification_id, max_notification_id2)
 
         # Insert the third event.
-        notification_ids = recorder.insert_events([event3])
+        notification_id = recorder.insert_events([event3])
 
-        # Check we got one event notification ID.
-        assert notification_ids is not None
-        self.assertEqual(len(notification_ids), 1)
+        # Check we got a notification ID.
+        assert notification_id is not None
 
         # Check it is larger than the last max notification ID.
-        self.assertGreater(notification_ids[0], max_notification_id2)
+        self.assertGreater(notification_id, max_notification_id2)
 
         # Check it is the same as the current max notification ID.
         max_notification_id3 = recorder.max_notification_id()
         assert isinstance(max_notification_id3, int)
-        self.assertEqual(notification_ids[0], max_notification_id3)
+        self.assertEqual(notification_id, max_notification_id3)
 
         # Select the recorded events for each originator ID,
         # and check we got what was written.
@@ -600,10 +597,8 @@ class TestKurrentDBApplicationRecorder(ApplicationRecorderTestCase):
         # self.assertIn("badly formed hexadecimal UUID string", str(cm1.exception))
 
         # Cover non-wrong-current-version exception handling when appending events.
-        cast(KurrentDBApplicationRecorder, recorder).client.close()
-        cast(KurrentDBApplicationRecorder, recorder).client.connection_spec._targets = [
-            "127.0.0.1:1000"
-        ]
+        recorder.client.close()
+        recorder.client.connection_spec._targets = ["127.0.0.1:1000"]
         with self.assertRaises(PersistenceError) as cm2:
             recorder.insert_events([event3])
         self.assertIn("failed to connect", str(cm2.exception))

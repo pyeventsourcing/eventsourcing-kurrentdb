@@ -1,9 +1,6 @@
 .EXPORT_ALL_VARIABLES:
 
-# DOCKER_IMAGE ?= eventstore/eventstore:23.10.0-bookworm-slim
-#DOCKER_IMAGE ?= docker.eventstore.com/eventstore/eventstoredb-ee:24.10.0-x64-8.0-bookworm-slim
-#DOCKER_IMAGE ?= docker.eventstore.com/kurrent-latest/kurrentdb:25.0.0-x64-8.0-bookworm-slim
-DOCKER_IMAGE ?= kurrentplatform/kurrentdb:26.1.0
+DOCKER_IMAGE ?= kurrentplatform/kurrentdb:25.1.4
 
 PYTHONUNBUFFERED=1
 

@@ -6,10 +6,9 @@ from uuid import uuid4
 
 import eventsourcing.domain
 import kurrentdbclient.exceptions
-from eventsourcing.application import EventSourcedLog
-from eventsourcing.domain import put_metadata_in_context
+from eventsourcing.domain import EventSourcedLog
 from eventsourcing.errors import InfrastructureFactoryError, PersistenceError
-from eventsourcing.projection import ApplicationSubscription
+from eventsourcing.metadata import put_metadata_in_context
 from eventsourcing.pydantic import Aggregate, AggregatesApplication, Decision
 from eventsourcing.system import NotificationLogReader
 from eventsourcing.tests.application import (
@@ -308,7 +307,7 @@ class TestApplicationWithKurrentDB(ExampleApplicationTestCase):
 
         # Check we can subscribe to all notification since the initial commit position.
         # - and check the subscription filters out snapshot events...
-        subscription = ApplicationSubscription(app, gt=max_notification_id1)
+        subscription = app.application_subscription(gt=max_notification_id1)
         max_notification_id5 = app.recorder.max_notification_id()
 
         domain_events = []
@@ -608,7 +607,7 @@ class TestApplicationWithKurrentDB(ExampleApplicationTestCase):
 
         # Check we can subscribe to all notification since the initial commit position.
         # - and check the subscription filters out snapshot events...
-        subscription = ApplicationSubscription(app, gt=max_notification_id1)
+        subscription = app.application_subscription(gt=max_notification_id1)
         max_notification_id5 = app.recorder.max_notification_id()
 
         domain_events = []

@@ -5,11 +5,16 @@ from typing import Any, TypedDict
 from unittest import TestCase
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
-from eventsourcing.domain import event
+from eventsourcing.decorator import event
 from eventsourcing.persistence import Tracking, TrackingRecorder
 from eventsourcing.popo import POPOTrackingRecorder
-from eventsourcing.projection import Projection, ProjectionRunner
-from eventsourcing.pydantic import Aggregate, AggregatesApplication, Decision
+from eventsourcing.projection import EventProcessor, ProjectionRunner
+from eventsourcing.pydantic import (
+    Aggregate,
+    AggregateEvent,
+    AggregatesApplication,
+    Decision,
+)
 from eventsourcing.utils import get_topic
 
 from tests.common import INSECURE_CONNECTION_STRING
@@ -18,14 +23,16 @@ from tests.common import INSECURE_CONNECTION_STRING
 class TrainingSchool(AggregatesApplication):
     def register(self, name: str) -> int:
         dog = Dog(name=name)
-        recordings = self.save(dog)
-        return recordings[-1].notification.id
+        notification_id = self.save(dog)
+        assert notification_id is not None
+        return notification_id
 
     def add_trick(self, name: str, trick: str) -> int:
         dog = self._get_dog(name)
         dog.add_trick(trick)
-        recordings = self.save(dog)
-        return recordings[-1].notification.id
+        notification_id = self.save(dog)
+        assert notification_id is not None
+        return notification_id
 
     def get_dog_details(self, name: str) -> DogDetails:
         dog = self._get_dog(name)
@@ -104,7 +111,7 @@ class POPOCountRecorder(POPOTrackingRecorder, CounterViewInterface):
             self._trick_counter += 1
 
 
-class CountProjection(Projection[CounterViewInterface]):
+class CountProjection(EventProcessor[AggregateEvent, CounterViewInterface]):
     topics = (
         get_topic(Dog.Registered),
         get_topic(Dog.TrickAdded),
@@ -144,17 +151,17 @@ class TestProjection(TestCase):
 
         with ProjectionRunner(
             application_class=TrainingSchool,
-            projection_class=CountProjection,
+            event_processor_class=CountProjection,
             view_class=POPOCountRecorder,
             env=env,
         ) as runner:
             # Get "read model" instance from runner, because
             # state of materialised view is stored in memory.
-            materialised_view = runner.projection.view
+            materialised_view = runner.view
 
             # Wait for the existing events to be processed.
             materialised_view.wait(
-                application_name=training_school.name,
+                context_name=training_school.context_name,
                 notification_id=training_school.recorder.max_notification_id(),
                 timeout=100,
                 interrupt=runner.is_interrupted,
@@ -169,7 +176,7 @@ class TestProjection(TestCase):
 
             # Wait for the new event to be processed by the projection.
             materialised_view.wait(
-                application_name=training_school.name,
+                context_name=training_school.context_name,
                 notification_id=notification_id,
                 timeout=1,
                 interrupt=runner.is_interrupted,
@@ -185,7 +192,7 @@ class TestProjection(TestCase):
 
             # Wait for the new event to be processed.
             materialised_view.wait(
-                training_school.name,
+                training_school.context_name,
                 notification_id,
             )
 
